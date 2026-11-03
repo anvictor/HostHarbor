@@ -1,0 +1,9 @@
+node_modules/
+.tools/
+dist/
+artifacts/
+.DS_Store
+.env*
+AGENTS.md
+CV_EXPERIENCE_CHECKPOINT.md
+handsOff.md

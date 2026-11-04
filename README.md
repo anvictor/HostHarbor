@@ -14,7 +14,7 @@ Project-local Node can be used when the system installation is older; no global 
 Secrets are intended to be protected using the operating system via Electron safeStorage. SSH host keys require trust confirmation; changed keys are rejected. FTPS certificate validation remains enabled. Plain FTP is unencrypted and requires explicit confirmation.
 
 ## Project status
-Under active development. Requirements are independently reviewed; local unit, protocol integration and Electron UI smoke tests are available; independent implementation review is pending. Do not treat this as a production release.
+Under active development. Requirements are independently reviewed; local unit, protocol integration and Electron UI smoke tests passed; independent implementation review approved PR #1 and GitHub CI passed. Do not treat this as a production release.
 
 - [Requirements](docs/requirements.md)
 - [Architecture](docs/architecture.md)

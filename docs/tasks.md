@@ -16,3 +16,9 @@ Review: https://github.com/anvictor/HostHarbor/pull/1#issuecomment-6625983645
 Next: user acceptance on a real hosting connection, under separate authorization for remote changes.
 Validation: validation.md
 Scope excludes file-content editing and folder synchronization permanently unless user changes requirements.
+
+## HH-003 — understandable connection errors
+State: implementation
+Scope: classify common network/auth/TLS failures, Ukrainian next steps, expandable redacted technical details in profile and notice. No retries, protocol changes or real-server access.
+Acceptance: timeout is not presented as a wrong password; FTP530 vs550 distinguished; certificate checks unchanged; unknown diagnostics retained safely; details never use innerHTML and reset between attempts; unit + hidden UI checks.
+Authority: user said continue after recommendation to improve connection messages. Existing commit/push/PR and conditional merge authority applies.

@@ -31,18 +31,23 @@ function errorMessage(error) {
 async function call(method, argument) {
   if (!api || typeof api[method] !== 'function') throw new Error('Не вдалося завантажити зв’язок із програмою. Перезапустіть HostHarbor.');
   const result = argument === undefined ? await api[method]() : await api[method](argument);
-  if (!result?.ok) throw new Error(errorMessage(result?.error));
+  if (!result?.ok) { const error = new Error(errorMessage(result?.error)); error.details = errorMessage(result?.errorDetails || ''); if (!result?.errorDetails) error.details = ''; throw error; }
   return result.value;
 }
-function notice(message) { $('notice-text').textContent = message; $('notice').hidden = false; }
+function showDetails(id, details = '') {
+  const element = $(id); if (!element) return;
+  element.hidden = !details; element.open = false;
+  element.querySelector('pre').textContent = details;
+}
+function notice(message, details = '') { $('notice-text').textContent = message; showDetails('notice-details', details); $('notice').hidden = false; }
 async function perform(action, { formError } = {}) {
   if (state.busy) return;
   state.busy = true; refreshControls();
   try { await action(); }
   catch (error) {
     const message = errorMessage(error);
-    if (formError) { $(formError).textContent = message; $(formError).hidden = false; }
-    else notice(message);
+    if (formError) { $(formError).textContent = message; $(formError).hidden = false; showDetails(`${formError}-details`, error.details); }
+    else notice(message, error.details);
   } finally {
     state.busy = false; refreshControls();
     if (state.refreshAfterWork && !queueActive()) { state.refreshAfterWork = false; refreshPanes(); }
@@ -222,7 +227,7 @@ function openProfile(profile = null) {
   $('profile-password').placeholder = profile?.hasSecret ? 'Збережений пароль доступний · залиште порожнім' : 'Введіть пароль';
   $('secret-hint').textContent = state.secretStorageAvailable ? 'Збережені секрети не показуються у формі. Залиште поля порожніми, щоб використати збережені.' : 'Захищене сховище ОС недоступне. Можна під’єднатись без збереження секретів.';
   $('delete-profile').hidden = !profile;
-  $('profile-error').hidden = true; updateProtocol(); refreshControls();
+  $('profile-error').hidden = true; showDetails('profile-error-details'); updateProtocol(); refreshControls();
   profileDialog.showModal(); $('profile-name').focus();
 }
 function updateProtocol() {
@@ -236,7 +241,7 @@ function readProfile() {
 }
 async function saveProfile(connect) {
   if (locked() || !$('profile-form').reportValidity()) return;
-  $('profile-error').hidden = true;
+  $('profile-error').hidden = true; showDetails('profile-error-details');
   await perform(async () => {
     const input = readProfile();
     if (state.connected && input.id === state.profileId) {

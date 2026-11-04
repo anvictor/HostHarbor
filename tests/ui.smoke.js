@@ -47,6 +47,25 @@ assert(!await evaluate("document.getElementById('profile-dialog').open"),'Profil
 assert(await evaluate("document.getElementById('profiles').textContent.includes('Smoke test')"));
 const profiles=await evaluate('window.harbor.bootstrap()');assert(profiles.value.profiles.some(p=>p.name==='Smoke test'));
 await evaluate("document.getElementById('dismiss-notice').click()");
+// Refused local SSH connection must be actionable and retain a collapsed diagnostic.
+const {createServer}=await import('node:net');
+const probe=createServer();await new Promise(resolve=>probe.listen(0,'127.0.0.1',resolve));
+const closedPort=probe.address().port;await new Promise(resolve=>probe.close(resolve));
+await evaluate("document.querySelector('.profile-main').click()");
+await evaluate(`document.getElementById('profile-port').value=${closedPort};document.getElementById('profile-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))`);
+for(let attempt=0;attempt<100;attempt++){if(await evaluate("!document.getElementById('profile-error').hidden"))break;await new Promise(resolve=>setTimeout(resolve,50));}
+assert.match(await evaluate("document.getElementById('profile-error').textContent"),/З’єднання відхилено/);
+assert.equal(await evaluate("document.getElementById('profile-error-details').hidden"),false);
+assert.equal(await evaluate("document.getElementById('profile-error-details').open"),false);
+assert.match(await evaluate("document.querySelector('#profile-error-details pre').textContent"),/ECONNREFUSED/);
+await fs.mkdir(process.cwd()+'/artifacts',{recursive:true});
+const errorShot=await send('Page.captureScreenshot',{format:'png'});
+await fs.writeFile(process.cwd()+'/artifacts/connection-error.png',Buffer.from(errorShot.data,'base64'));
+await evaluate("document.getElementById('close-profile').click();document.getElementById('add-profile').click()");
+assert.equal(await evaluate("document.getElementById('profile-error-details').hidden"),true);
+assert.equal(await evaluate("document.querySelector('#profile-error-details pre').textContent"),'');
+await evaluate("document.getElementById('close-profile').click()");
+
 await fs.mkdir(process.cwd()+'/artifacts',{recursive:true});
 const shot=await send('Page.captureScreenshot',{format:'png'});await fs.writeFile(process.cwd()+'/artifacts/desktop-smoke.png',Buffer.from(shot.data,'base64'));
 await send('Page.close');
@@ -73,4 +92,4 @@ const finished=new Promise(resolve=>processUnderTest.once('exit',resolve));
 void send('Browser.close').catch(()=>{});
 await Promise.race([finished,new Promise((_,reject)=>{const timer=setTimeout(()=>{processUnderTest.kill('SIGKILL');reject(Error('App did not quit cleanly'))},5000);timer.unref()})]);
 
-console.log(JSON.stringify({singleInstance:true,reopenAfterClose:true,rendererLoaded:true,nodeIntegrationDisabled:true,localNavigation:true,profileSaved:true,osEncryptionAvailable:bootstrap.value.secretStorageAvailable,screenshot:'artifacts/desktop-smoke.png'}));ws.close();await fs.rm(fixture,{recursive:true,force:true});
+console.log(JSON.stringify({friendlyConnectionErrors:true,singleInstance:true,reopenAfterClose:true,rendererLoaded:true,nodeIntegrationDisabled:true,localNavigation:true,profileSaved:true,osEncryptionAvailable:bootstrap.value.secretStorageAvailable,screenshot:'artifacts/desktop-smoke.png'}));ws.close();await fs.rm(fixture,{recursive:true,force:true});

@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { explainError } from './core/errors.js';
 import { ProfileStore } from './core/store.js';
 import { absolutePath, child, component, forbidRoot, safeError } from './core/paths.js';
 import { LocalAdapter } from './adapters/local.js';
@@ -45,7 +46,7 @@ let commandTail = Promise.resolve();
 function register(name, handler, concurrent = false) {
   ipcMain.handle(`harbor:${name}`, async (event, payload) => {
     if (event.sender !== window?.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== rendererUrl) return { ok: false, error: 'Недозволене джерело запиту.' };
-    const execute = async () => { try { return { ok: true, value: await handler(payload) }; } catch (error) { return { ok: false, error: describeError(error) }; } };
+    const execute = async () => { try { return { ok: true, value: await handler(payload) }; } catch (error) { const report = explainError(error, credentialsInUse); return { ok: false, error: report.message, errorDetails: report.details, errorKind: report.kind }; } };
     if (concurrent) return execute();
     const result = commandTail.then(execute); commandTail = result.then(() => {}); return result;
   });

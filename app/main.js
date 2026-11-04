@@ -15,12 +15,19 @@ if (!primaryInstance) app.quit();
 const chosenKeys = new Set();
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const rendererUrl = pathToFileURL(path.join(directory, 'renderer/index.html')).href;
-let window, store, session = null, closing = false, credentialsInUse = [];
-app.on('second-instance', () => {
+let window, store, session = null, closing = false, initialized = false, quitting = false, credentialsInUse = [];
+function focusWindow() {
+  if (process.env.HOSTHARBOR_TEST_MODE === '1') return;
   if (!window || window.isDestroyed()) return;
   if (window.isMinimized()) window.restore();
   window.show();
   window.focus();
+}
+app.on('second-instance', () => {
+  if (!initialized) return; // Initial startup will create its own window.
+  if (!window || window.isDestroyed()) {
+    void createWindow().then(focusWindow).catch(error => dialog.showErrorBox('HostHarbor', safeError(error)));
+  } else focusWindow();
 });
 const local = new LocalAdapter();
 const emit = (channel, value) => { if (window && !window.isDestroyed()) window.webContents.send(`harbor:${channel}`, value); };
@@ -98,8 +105,10 @@ function registerHandlers() {
   register('cancelQueue', async () => queue.cancel(), true);
 }
 async function createWindow() {
+  if (window && !window.isDestroyed()) return window;
   closing = false;
-  window = new BrowserWindow({ width: 1320, height: 840, minWidth: 980, minHeight: 620, title: 'HostHarbor', backgroundColor: nativeTheme.shouldUseDarkColors ? '#111827' : '#f5f7fb', webPreferences: { preload: path.join(directory, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false } });
+  quitting = false;
+  window = new BrowserWindow({ show: process.env.HOSTHARBOR_TEST_MODE !== '1', width: 1320, height: 840, minWidth: 980, minHeight: 620, title: 'HostHarbor', backgroundColor: nativeTheme.shouldUseDarkColors ? '#111827' : '#f5f7fb', webPreferences: { preload: path.join(directory, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('will-attach-webview', event => event.preventDefault());
@@ -109,14 +118,16 @@ async function createWindow() {
     event.preventDefault();
     void confirm('Скасувати чергу й закрити HostHarbor?', 'Передачі буде перервано. Завершені файли збережуться; на сервері може залишитися прихований тимчасовий файл.', 'Закрити').then(approved => { if (approved) { closing = true; queue.cancel(); window.close(); } });
   });
-  await window.loadURL(rendererUrl);
+  const createdWindow = window;
+  try { await createdWindow.loadURL(rendererUrl); }
+  catch (error) { if (!quitting && !createdWindow.isDestroyed()) throw error; }
 }
 app.whenReady().then(async () => {
   if (!primaryInstance) return;
-  store = new ProfileStore(app.getPath('userData'), safeStorage); await store.load(); registerHandlers();
+  store = new ProfileStore(app.getPath('userData'), safeStorage); await store.load(); registerHandlers(); initialized = true;
   Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'HostHarbor', submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] }, { label: 'Правка', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] }, { label: 'Вікно', submenu: [{ role: 'minimize' }, { role: 'zoom' }, { role: 'togglefullscreen' }] }]));
   await createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) void createWindow(); });
 }).catch(error => { dialog.showErrorBox('HostHarbor', safeError(error)); app.quit(); });
 app.on('window-all-closed', () => { session?.adapter.close(); session = null; if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { if (!queue.busy()) session?.adapter.close(); });
+app.on('before-quit', () => { if (!queue.busy()) { quitting = true; session?.adapter.close(); } });

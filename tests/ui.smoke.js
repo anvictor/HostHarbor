@@ -6,7 +6,7 @@ const {spawn}=await import('node:child_process');
 const {default:electron}=await import('electron');
 const smokeProfile=await fs.mkdtemp(process.cwd()+'/.tools/ui-smoke-');
 const executable=process.env.HOSTHARBOR_TEST_EXECUTABLE || electron;
-const processUnderTest=spawn(executable,['.','--remote-debugging-address=127.0.0.1',`--remote-debugging-port=${port}`],{cwd:process.cwd(),env:{...process.env,HOSTHARBOR_USER_DATA:smokeProfile},stdio:['ignore','pipe','pipe']});
+const processUnderTest=spawn(executable,['.','--remote-debugging-address=127.0.0.1',`--remote-debugging-port=${port}`],{cwd:process.cwd(),env:{...process.env,HOSTHARBOR_USER_DATA:smokeProfile,HOSTHARBOR_TEST_MODE:'1'},stdio:['ignore','pipe','pipe']});
 let diagnostics='';processUnderTest.stderr.on('data',chunk=>{diagnostics+=chunk.toString()});
 process.on('exit',()=>processUnderTest.kill());
 let targets;
@@ -18,7 +18,7 @@ for(let attempt=0;attempt<200;attempt++){
 assert(targets,'App debug target startup: '+diagnostics);
 const target = targets.find(t=>t.type==='page' && t.url.endsWith('/renderer/index.html'));
 assert(target,'App renderer target exists');
-const ws=new WebSocket(target.webSocketDebuggerUrl);await new Promise((resolve,reject)=>{ws.onopen=resolve;ws.onerror=reject});
+let ws=new WebSocket(target.webSocketDebuggerUrl);await new Promise((resolve,reject)=>{ws.onopen=resolve;ws.onerror=reject});
 let id=0;const pending=new Map();ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id){const p=pending.get(m.id);pending.delete(m.id);m.error?p.reject(m.error):p.resolve(m.result)}};
 const send=(method,params={})=>new Promise((resolve,reject)=>{const n=++id;pending.set(n,{resolve,reject});ws.send(JSON.stringify({id:n,method,params}))});
 const evaluate=async expression=>{const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value};
@@ -27,7 +27,7 @@ assert.equal(await evaluate('typeof window.harbor.bootstrap'),'function');
 for(let i=0;i<100;i++){if(await evaluate("document.getElementById('activity-label').textContent==='Готово до роботи'"))break;await new Promise(r=>setTimeout(r,50));}
 const bootstrap=await evaluate('window.harbor.bootstrap()');assert(bootstrap.ok);assert(bootstrap.value.secretStorageAvailable);
 // A second launch with the same userData must exit and focus the first window.
-const second=spawn(executable,['.'],{cwd:process.cwd(),env:{...process.env,HOSTHARBOR_USER_DATA:smokeProfile},stdio:'ignore'});
+const second=spawn(executable,['.'],{cwd:process.cwd(),env:{...process.env,HOSTHARBOR_USER_DATA:smokeProfile,HOSTHARBOR_TEST_MODE:'1'},stdio:'ignore'});
 const secondExit=await Promise.race([new Promise(resolve=>second.on('exit',resolve)),new Promise((_,reject)=>{const timer=setTimeout(()=>{second.kill();reject(Error('Second instance did not exit'))},10000);timer.unref()})]);
 assert.equal(secondExit,0,'Second launch exits normally');
 assert.equal(processUnderTest.exitCode,null,'First instance remains alive');
@@ -49,4 +49,28 @@ const profiles=await evaluate('window.harbor.bootstrap()');assert(profiles.value
 await evaluate("document.getElementById('dismiss-notice').click()");
 await fs.mkdir(process.cwd()+'/artifacts',{recursive:true});
 const shot=await send('Page.captureScreenshot',{format:'png'});await fs.writeFile(process.cwd()+'/artifacts/desktop-smoke.png',Buffer.from(shot.data,'base64'));
-console.log(JSON.stringify({singleInstance:true,rendererLoaded:true,nodeIntegrationDisabled:true,localNavigation:true,profileSaved:true,osEncryptionAvailable:bootstrap.value.secretStorageAvailable,screenshot:'artifacts/desktop-smoke.png'}));ws.close();processUnderTest.kill();await fs.rm(fixture,{recursive:true,force:true});
+await send('Page.close');
+ws.close();
+const relaunch=spawn(executable,['.'],{cwd:process.cwd(),env:{...process.env,HOSTHARBOR_USER_DATA:smokeProfile,HOSTHARBOR_TEST_MODE:'1'},stdio:'ignore'});
+assert.equal(await Promise.race([new Promise(resolve=>relaunch.on('exit',resolve)),new Promise((_,reject)=>{const timer=setTimeout(()=>{relaunch.kill();reject(Error('Relaunch did not exit'))},10000);timer.unref()})]),0);
+let reopened=[];
+for(let attempt=0;attempt<100;attempt++){
+ reopened=(await(await fetch(`http://127.0.0.1:${port}/json`)).json()).filter(t=>t.type==='page'&&t.url.endsWith('/renderer/index.html'));
+ if(reopened.length)break;
+ await new Promise(resolve=>setTimeout(resolve,50));
+}
+assert.equal(reopened.length,1,'Relaunch after closing the last window recreates exactly one window');
+ws=new WebSocket(reopened[0].webSocketDebuggerUrl);
+await new Promise((resolve,reject)=>{ws.onopen=resolve;ws.onerror=reject});
+ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id){const p=pending.get(m.id);pending.delete(m.id);m.error?p.reject(m.error):p.resolve(m.result)}};
+let ready=false;
+for(let attempt=0;attempt<100;attempt++){
+ ready=await evaluate("document.readyState==='complete' && typeof window.harbor?.bootstrap==='function' && document.getElementById('activity-label')?.textContent==='Готово до роботи'");
+ if(ready)break;await new Promise(resolve=>setTimeout(resolve,50));
+}
+assert(ready,'Reopened renderer completely loads before test shutdown');
+const finished=new Promise(resolve=>processUnderTest.once('exit',resolve));
+void send('Browser.close').catch(()=>{});
+await Promise.race([finished,new Promise((_,reject)=>{const timer=setTimeout(()=>{processUnderTest.kill('SIGKILL');reject(Error('App did not quit cleanly'))},5000);timer.unref()})]);
+
+console.log(JSON.stringify({singleInstance:true,reopenAfterClose:true,rendererLoaded:true,nodeIntegrationDisabled:true,localNavigation:true,profileSaved:true,osEncryptionAvailable:bootstrap.value.secretStorageAvailable,screenshot:'artifacts/desktop-smoke.png'}));ws.close();await fs.rm(fixture,{recursive:true,force:true});

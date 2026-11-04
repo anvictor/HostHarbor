@@ -26,6 +26,13 @@ assert.equal(await evaluate('typeof window.require'),'undefined');
 assert.equal(await evaluate('typeof window.harbor.bootstrap'),'function');
 for(let i=0;i<100;i++){if(await evaluate("document.getElementById('activity-label').textContent==='Готово до роботи'"))break;await new Promise(r=>setTimeout(r,50));}
 const bootstrap=await evaluate('window.harbor.bootstrap()');assert(bootstrap.ok);assert(bootstrap.value.secretStorageAvailable);
+// A second launch with the same userData must exit and focus the first window.
+const second=spawn(executable,['.'],{cwd:process.cwd(),env:{...process.env,HOSTHARBOR_USER_DATA:smokeProfile},stdio:'ignore'});
+const secondExit=await Promise.race([new Promise(resolve=>second.on('exit',resolve)),new Promise((_,reject)=>{const timer=setTimeout(()=>{second.kill();reject(Error('Second instance did not exit'))},10000);timer.unref()})]);
+assert.equal(secondExit,0,'Second launch exits normally');
+assert.equal(processUnderTest.exitCode,null,'First instance remains alive');
+assert.equal(await evaluate('typeof window.harbor.bootstrap'),'function');
+
 const fixture=await fs.mkdtemp('/private/tmp/hostharbor-ui-');await fs.writeFile(fixture+'/sample.txt','HostHarbor smoke fixture');
 await evaluate(`document.getElementById('local-path').value=${JSON.stringify(fixture)};document.getElementById('local-path-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))`);
 for(let i=0;i<100;i++){if(await evaluate("document.getElementById('local-files').textContent.includes('sample.txt')"))break;await new Promise(r=>setTimeout(r,50));}
@@ -42,4 +49,4 @@ const profiles=await evaluate('window.harbor.bootstrap()');assert(profiles.value
 await evaluate("document.getElementById('dismiss-notice').click()");
 await fs.mkdir(process.cwd()+'/artifacts',{recursive:true});
 const shot=await send('Page.captureScreenshot',{format:'png'});await fs.writeFile(process.cwd()+'/artifacts/desktop-smoke.png',Buffer.from(shot.data,'base64'));
-console.log(JSON.stringify({rendererLoaded:true,nodeIntegrationDisabled:true,localNavigation:true,profileSaved:true,osEncryptionAvailable:bootstrap.value.secretStorageAvailable,screenshot:'artifacts/desktop-smoke.png'}));ws.close();processUnderTest.kill();await fs.rm(fixture,{recursive:true,force:true});
+console.log(JSON.stringify({singleInstance:true,rendererLoaded:true,nodeIntegrationDisabled:true,localNavigation:true,profileSaved:true,osEncryptionAvailable:bootstrap.value.secretStorageAvailable,screenshot:'artifacts/desktop-smoke.png'}));ws.close();processUnderTest.kill();await fs.rm(fixture,{recursive:true,force:true});

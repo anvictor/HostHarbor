@@ -10,10 +10,18 @@ import { SFTPAdapter, FTPAdapter } from './adapters/remote.js';
 import { TransferQueue } from './core/queue.js';
 
 if (process.env.HOSTHARBOR_USER_DATA) app.setPath('userData', absolutePath(process.env.HOSTHARBOR_USER_DATA));
+const primaryInstance = app.requestSingleInstanceLock();
+if (!primaryInstance) app.quit();
 const chosenKeys = new Set();
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const rendererUrl = pathToFileURL(path.join(directory, 'renderer/index.html')).href;
 let window, store, session = null, closing = false, credentialsInUse = [];
+app.on('second-instance', () => {
+  if (!window || window.isDestroyed()) return;
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+});
 const local = new LocalAdapter();
 const emit = (channel, value) => { if (window && !window.isDestroyed()) window.webContents.send(`harbor:${channel}`, value); };
 const confirm = async (message, detail, action = 'Продовжити') => {
@@ -104,6 +112,7 @@ async function createWindow() {
   await window.loadURL(rendererUrl);
 }
 app.whenReady().then(async () => {
+  if (!primaryInstance) return;
   store = new ProfileStore(app.getPath('userData'), safeStorage); await store.load(); registerHandlers();
   Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'HostHarbor', submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] }, { label: 'Правка', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] }, { label: 'Вікно', submenu: [{ role: 'minimize' }, { role: 'zoom' }, { role: 'togglefullscreen' }] }]));
   await createWindow();

@@ -90,6 +90,7 @@ function registerHandlers() {
   register('cancelQueue', async () => queue.cancel(), true);
 }
 async function createWindow() {
+  closing = false;
   window = new BrowserWindow({ width: 1320, height: 840, minWidth: 980, minHeight: 620, title: 'HostHarbor', backgroundColor: nativeTheme.shouldUseDarkColors ? '#111827' : '#f5f7fb', webPreferences: { preload: path.join(directory, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());

@@ -102,10 +102,10 @@ async function startFTP(t, root, tls) {
   await server.listen(); t.after(() => server.close());
   return { protocol: tls ? 'ftps' : 'ftp', host: '127.0.0.1', port: server.server.address().port, username: 'test-user' };
 }
-async function certificate(directory) {
+async function certificate(directory, names = 'DNS:localhost,IP:127.0.0.1') {
   const keyPath = path.join(directory, 'tls-key.pem'), certPath = path.join(directory, 'tls-cert.pem');
   const configPath = path.join(directory, 'tls.cnf');
-  await fs.writeFile(configPath, '[req]\ndistinguished_name=dn\nx509_extensions=extensions\nprompt=no\n[dn]\nCN=localhost\n[extensions]\nsubjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,digitalSignature,keyEncipherment,keyCertSign\n');
+  await fs.writeFile(configPath, '[req]\ndistinguished_name=dn\nx509_extensions=extensions\nprompt=no\n[dn]\nCN=localhost\n[extensions]\nsubjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,digitalSignature,keyEncipherment,keyCertSign\n'.replace('DNS:localhost,IP:127.0.0.1', names));
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-config', configPath, '-keyout', keyPath, '-out', certPath], { stdio: 'ignore', timeout: 20000 });
   return { key: await fs.readFile(keyPath), cert: await fs.readFile(certPath) };
 }
@@ -179,4 +179,56 @@ test('Explicit FTPS: untrusted certificate rejected; trusted certificate encrypt
   const trusted = new FTPAdapter({ ca: tls.cert }); await trusted.connect(profile, credentials);
   assert.equal(trusted.client.ftp.socket.encrypted, true); assert.equal(trusted.client.ftp.socket.authorized, true);
   await roundtrip(t, trusted, root);
+});
+
+// Regression scenarios independently developed during review.
+test('independent review: encrypted SSH private key authentication', {timeout:20000},async t=>{
+ const root=await temporary(t), keyPath=path.join(root,'encrypted-key.pem');
+ const pair=generateKeyPairSync('rsa',{modulusLength:2048});
+ const passphrase='disposable-key-passphrase';
+ const privateKey=pair.privateKey.export({type:'pkcs1',format:'pem',cipher:'aes-256-cbc',passphrase});
+ await fs.writeFile(keyPath,privateKey,{mode:0o600});
+ const parsed=utils.parseKey(privateKey,passphrase);let signedAuth=0;
+ const hostKey=generateKeyPairSync('rsa',{modulusLength:2048}).privateKey.export({type:'pkcs1',format:'pem'});
+ const clients=new Set();
+ const server=new SSHServer({hostKeys:[hostKey]},client=>{
+  clients.add(client);client.on('error',()=>{});client.on('close',()=>clients.delete(client));
+  client.on('authentication',ctx=>{
+   if(ctx.method==='publickey'&&ctx.key.data.equals(parsed.getPublicSSH())&&(!ctx.signature||parsed.verify(ctx.blob,ctx.signature,ctx.hashAlgo))){if(ctx.signature)signedAuth++;ctx.accept()}else ctx.reject(['publickey']);
+  });
+  client.on('ready',()=>client.on('session',accept=>accept().on('sftp',acceptSFTP=>installSFTP(acceptSFTP(),root))));
+ });
+ await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});
+ t.after(async()=>{for(const c of clients)c.end();await new Promise(r=>server.close(r))});
+ const remote=new SFTPAdapter();t.after(()=>remote.close());
+ await remote.connect({protocol:'sftp',host:'127.0.0.1',port:server.address().port,username:'test-user',keyPath},{passphrase},async()=>{});
+ assert.equal(signedAuth,1);assert(Array.isArray(await remote.list('/')));
+});
+test('independent review: trusted FTPS certificate with wrong hostname is rejected',{timeout:20000},async t=>{
+ const root=await temporary(t),tls=await certificate(await temporary(t), 'DNS:localhost'),profile=await startFTP(t,root,tls);
+ const remote=new FTPAdapter({ca:tls.cert});t.after(()=>remote.close());
+ await assert.rejects(remote.connect(profile,credentials),/IP|Hostname|altname|certificate/iu);
+});
+for(const proto of ['sftp','ftp']) test(`independent review: real ${proto} cancellation preserves original and stops pending`,{timeout:20000},async t=>{
+ const root=await temporary(t),workspace=await temporary(t);
+ const source=path.join(workspace,'large.bin');await fs.writeFile(source,Buffer.alloc(32*1024*1024,37));
+ await fs.writeFile(path.join(root,'target.bin'),'original');
+ let remote;
+ if(proto==='sftp'){const s=await startSSH(t,root);remote=new SFTPAdapter();await remote.connect(s.profile,credentials,async()=>{})}
+ else {const p=await startFTP(t,root);remote=new FTPAdapter();await remote.connect(p,credentials)}
+ t.after(()=>remote.close());
+ let cancelled=false,finish;
+ const done=new Promise(r=>finish=r);
+ const queue=new TransferQueue({local:new LocalAdapter(),confirmOverwrite:async()=>true,emit:jobs=>{
+  if(!cancelled&&jobs.some(j=>j.status==='running'&&j.bytes>0)){cancelled=true;setTimeout(()=>queue.cancel(),1)}
+  if(!queue.busy())finish(jobs);
+ }});
+ const s={id:'review-session',adapter:remote};
+ queue.add({direction:'upload',sourcePath:source,destinationPath:'/target.bin'},s);
+ queue.add({direction:'upload',sourcePath:source,destinationPath:'/pending.bin'},s);
+ const jobs=await done;
+ assert.equal(cancelled,true);assert.equal(jobs[0].status,'cancelled',jobs[0].error);assert.equal(jobs[1].status,'cancelled');
+ assert.equal(await fs.readFile(path.join(root,'target.bin'),'utf8'),'original');
+ await assert.rejects(fs.stat(path.join(root,'pending.bin')),e=>e.code==='ENOENT');
+ assert.equal(queue.busy(),false);assert.equal(remote.closed,true);
 });

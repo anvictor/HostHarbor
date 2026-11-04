@@ -26,8 +26,9 @@ export class TransferQueue {
     if (this.running) return;
     this.running = true;
     try {
-      for (const job of this.jobs) {
-        if (job.status !== 'pending') continue;
+      for (;;) {
+        const job = this.jobs.find(item => item.status === 'pending');
+        if (!job) break;
         this.active = new AbortController(); job.status = 'running'; this.publish();
         try {
           await this.transfer(job, this.active.signal);

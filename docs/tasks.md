@@ -7,7 +7,7 @@ Requirements: requirements.md
 Architecture: architecture.md
 Requirements evidence: reviews/HH-001-requirements.md
 Branch: codex/hh-001-desktop
-PR: not created yet
+PR: https://github.com/anvictor/HostHarbor/pull/1
 Checks: unit/local filesystem and queue tests, local protocol integration, Mac UI smoke. Exact commands follow implementation.
 Next: independent review, resolve findings, PR/CI; merge only after required checks.
 Validation: validation.md

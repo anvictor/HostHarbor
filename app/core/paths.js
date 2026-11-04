@@ -45,7 +45,7 @@ export function profile(input, id) {
   };
 }
 export function safeError(error, secrets = []) {
-  let message = String(error?.message || error || 'Невідома помилка.').slice(0, 1600);
-  for (const secret of secrets) if (typeof secret === 'string' && secret) message = message.split(secret).join('[приховано]');
-  return message.replace(/(password|passphrase|authorization)\s*[:=]\s*[^\s,;]+/giu, '$1=[приховано]');
+  let message = String(error?.message || error || 'Невідома помилка.');
+  for (const secret of secrets.filter(value => typeof value === 'string' && value).sort((a, b) => b.length - a.length)) message = message.split(secret).join('[приховано]');
+  return message.replace(/(password|passphrase|authorization)\s*[:=]\s*[^\s,;]+/giu, '$1=[приховано]').slice(0, 1600);
 }

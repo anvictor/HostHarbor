@@ -99,3 +99,27 @@ test('cancellation closes bound session, aborts active job and never replays pen
   await started; queue.cancel(); const jobs = await done;
   assert.ok(closed >= 1); assert.equal(jobs[0].status, 'cancelled'); assert.equal(jobs[1].status, 'cancelled'); assert.deepEqual(await fs.readdir(dst), []);
 });
+
+test('error truncation cannot reveal a credential prefix at the boundary', () => {
+  const secret = 'sensitive-review-password';
+  const message = safeError(new Error('x'.repeat(1590) + secret), [secret]);
+  assert.equal(message.includes('sensitive-'), false);
+  assert.equal(message.length <= 1600, true);
+});
+
+test('pruning completed history while active does not strand newly queued work', async () => {
+  const queue = new TransferQueue({ local: {}, emit: () => {}, confirmOverwrite: async () => true });
+  queue.jobs = Array.from({ length: 998 }, (_, i) => ({ id: `old-${i}`, status: 'completed' }));
+  const executed = [];
+  queue.transfer = async job => { executed.push(job.sourcePath); };
+  const session = { id: 'fixed', adapter: { close() {} } };
+  for (const name of ['one', 'two', 'three']) queue.add({ direction: 'upload', sourcePath: `/${name}`, destinationPath: `/out/${name}` }, session);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(executed, ['/one', '/two', '/three']);
+  assert.equal(queue.busy(), false);
+  assert.equal(queue.jobs.some(job => job.status === 'pending'), false);
+});
+
+test('overlapping password and passphrase are redacted longest first', () => {
+  assert.equal(safeError(new Error('short-password-long-passphrase'), ['short-password', 'short-password-long-passphrase']), '[приховано]');
+});
